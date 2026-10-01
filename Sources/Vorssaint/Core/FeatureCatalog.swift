@@ -557,6 +557,7 @@ extension AppFeature {
             case (.monitorPower, .notifications):
                 return boolFor(DefaultsKey.monitorAlertBattery)
                     || boolFor(DefaultsKey.monitorAlertBatteryTemperature)
+                    || boolFor(DefaultsKey.monitorAlertHighCharge)
             case (.appUpdates, .notifications):
                 return AppUpdatesSupport.CheckFrequency
                     .sanitized(stringFor(DefaultsKey.appUpdatesCheckFrequency)) != .off
@@ -593,6 +594,7 @@ extension AppFeature {
         (DefaultsKey.monitorAlertMemory, .monitorMemory),
         (DefaultsKey.monitorAlertDisk, .monitorDisk),
         (DefaultsKey.monitorAlertBattery, .monitorPower),
+        (DefaultsKey.monitorAlertHighCharge, .monitorPower),
     ]
 
     static func anyMonitorAlertEnabled(isAvailable: (AppFeature) -> Bool,
