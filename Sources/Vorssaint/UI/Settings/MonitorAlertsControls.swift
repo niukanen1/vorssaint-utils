@@ -8,6 +8,7 @@ struct MonitorAlertsControls: View {
     @ObservedObject private var l10n = L10n.shared
     let compact: Bool
     @State private var notificationsDenied = false
+    @State private var testAuthorizationUnavailable = false
     @AppStorage(DefaultsKey.monitorAlertCPU) private var alertCPU = false
     @AppStorage(DefaultsKey.monitorAlertCPUTemperature) private var alertCPUTemperature = false
     @AppStorage(DefaultsKey.monitorAlertBatteryTemperature) private var alertBatteryTemperature = false
@@ -101,7 +102,7 @@ struct MonitorAlertsControls: View {
             .monitorTokenGroup()
             if AppFeature.monitorPower.isAvailable, PowerSampler.hasInternalBattery {
                 Button(text.sendTest) {
-                    MonitorAlertService.sendHighChargeTest()
+                    sendHighChargeTest()
                 }
             }
             // One interval for every alert, each timed on its own, so it sits
@@ -112,7 +113,7 @@ struct MonitorAlertsControls: View {
                     .fixedSize()
             }
             .disabled(!anyAlertEnabled)
-            if notificationsDenied, anyAlertEnabled {
+            if showsNotificationDenied {
                 Text(text.notificationsDenied)
                     .font(.caption)
                     .foregroundStyle(.orange)
@@ -212,7 +213,7 @@ struct MonitorAlertsControls: View {
                             step: 5)
                 }
                 Button(text.sendTest) {
-                    MonitorAlertService.sendHighChargeTest()
+                    sendHighChargeTest()
                 }
             }
             if anyAlertEnabled {
@@ -221,7 +222,7 @@ struct MonitorAlertsControls: View {
             // Alerts silently cannot fire when macOS notifications are denied
             // for the app; without this line that state is invisible (the
             // user just never hears anything).
-            if notificationsDenied, anyAlertEnabled {
+            if showsNotificationDenied {
                 Text(text.notificationsDenied)
                     .font(.system(size: 9.5))
                     .foregroundStyle(.orange)
@@ -239,13 +240,26 @@ struct MonitorAlertsControls: View {
             || (PowerSampler.hasInternalBattery && alertHighCharge)
     }
 
+    private var showsNotificationDenied: Bool {
+        testAuthorizationUnavailable || (notificationsDenied && anyAlertEnabled)
+    }
+
+    private func sendHighChargeTest() {
+        MonitorAlertService.sendHighChargeTest { result in
+            testAuthorizationUnavailable = result == .authorizationUnavailable
+            if result == .accepted { notificationsDenied = false }
+        }
+    }
+
     /// Checked slightly delayed so a just-fired authorization prompt has a
     /// chance to be answered before the warning appears.
     private func refreshNotificationStatus() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
             UNUserNotificationCenter.current().getNotificationSettings { settings in
                 DispatchQueue.main.async {
-                    notificationsDenied = settings.authorizationStatus == .denied
+                    let denied = settings.authorizationStatus == .denied
+                    notificationsDenied = denied
+                    if !denied { testAuthorizationUnavailable = false }
                 }
             }
         }

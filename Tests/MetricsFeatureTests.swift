@@ -9,6 +9,7 @@ import CoreGraphics
 import Darwin
 import Foundation
 import ImageIO
+import UserNotifications
 import VMStatisticsCompat
 
 enum MetricsFeatureTests {
@@ -758,7 +759,7 @@ enum MetricsFeatureTests {
                       hasBattery: Bool = true,
                       external: Bool = true,
                       posts: inout [Int],
-                      completions: inout [(Bool) -> Void]) {
+                      completions: inout [(NotificationPostResult) -> Void]) {
             controller.evaluate(enabled: enabled, charge: charge, hasBattery: hasBattery,
                                 externalConnected: external, threshold: 80) { value, completion in
                 posts.append(value)
@@ -766,51 +767,109 @@ enum MetricsFeatureTests {
             }
         }
 
+        suite.expect(NotificationPostResult.authorizationResult(for: .authorized) == .accepted
+                && NotificationPostResult.authorizationResult(for: .provisional) == .accepted
+                && NotificationPostResult.authorizationResult(for: .notDetermined) == .authorizationPending
+                && NotificationPostResult.authorizationResult(for: .denied) == .authorizationUnavailable,
+               "real notification authorization statuses map to accepted, pending and unavailable outcomes")
+
         let retryController = HighChargeReminderDeliveryController()
+        retryController.observePermission(granted: false)
         var retryPosts: [Int] = []
-        var retryCompletions: [(Bool) -> Void] = []
+        var retryCompletions: [(NotificationPostResult) -> Void] = []
         evaluate(retryController, posts: &retryPosts, completions: &retryCompletions)
-        retryCompletions[0](false)
+        retryCompletions[0](.authorizationPending)
         evaluate(retryController, posts: &retryPosts, completions: &retryCompletions)
-        suite.expect(retryPosts == [80, 80],
-               "a failed post re-arms the same session for the next known sample")
-        retryCompletions[1](true)
+        retryCompletions[1](.deliveryFailed)
         evaluate(retryController, posts: &retryPosts, completions: &retryCompletions)
-        suite.expect(retryPosts == [80, 80],
-               "an accepted retry keeps the current session one-shot")
+        retryCompletions[2](.accepted)
+        evaluate(retryController, posts: &retryPosts, completions: &retryCompletions)
+        suite.expect(retryPosts == [80, 80, 80],
+               "pending authorization and delivery failure retry, while an accepted post closes the session")
+
+        let deniedController = HighChargeReminderDeliveryController()
+        deniedController.observePermission(granted: false)
+        var deniedPosts: [Int] = []
+        var deniedCompletions: [(NotificationPostResult) -> Void] = []
+        evaluate(deniedController, posts: &deniedPosts, completions: &deniedCompletions)
+        deniedCompletions[0](.authorizationUnavailable)
+        for _ in 0..<4 {
+            evaluate(deniedController, posts: &deniedPosts, completions: &deniedCompletions)
+        }
+        suite.expect(deniedPosts == [80] && !deniedController.armed,
+               "denied authorization blocks repeated snapshots in the current charging session")
+        deniedController.observePermission(granted: true)
+        evaluate(deniedController, posts: &deniedPosts, completions: &deniedCompletions)
+        deniedCompletions[1](.accepted)
+        deniedController.observePermission(granted: true)
+        evaluate(deniedController, posts: &deniedPosts, completions: &deniedCompletions)
+        deniedController.observePermission(granted: false)
+        deniedController.observePermission(granted: true)
+        evaluate(deniedController, posts: &deniedPosts, completions: &deniedCompletions)
+        suite.expect(deniedPosts == [80, 80] && !deniedController.armed,
+               "one observed grant reopens a blocked session, but repeated or post-accept grants do not duplicate it")
+
+        let grantRaceController = HighChargeReminderDeliveryController()
+        grantRaceController.observePermission(granted: false)
+        var grantRacePosts: [Int] = []
+        var grantRaceCompletions: [(NotificationPostResult) -> Void] = []
+        evaluate(grantRaceController, posts: &grantRacePosts, completions: &grantRaceCompletions)
+        grantRaceController.observePermission(granted: true)
+        grantRaceCompletions[0](.authorizationUnavailable)
+        evaluate(grantRaceController, posts: &grantRacePosts, completions: &grantRaceCompletions)
+        grantRaceCompletions[1](.accepted)
+        suite.expect(grantRacePosts == [80, 80] && !grantRaceController.armed,
+               "a grant observed before a late denied completion permits exactly one current-session retry")
+
+        let cachedGrantController = HighChargeReminderDeliveryController()
+        cachedGrantController.observePermission(granted: true)
+        var cachedGrantPosts: [Int] = []
+        var cachedGrantCompletions: [(NotificationPostResult) -> Void] = []
+        evaluate(cachedGrantController, posts: &cachedGrantPosts, completions: &cachedGrantCompletions)
+        cachedGrantCompletions[0](.authorizationUnavailable)
+        cachedGrantController.observePermission(granted: true)
+        evaluate(cachedGrantController, posts: &cachedGrantPosts, completions: &cachedGrantCompletions)
+        suite.expect(cachedGrantPosts == [80] && !cachedGrantController.armed,
+               "an initially cached grant and repeated identical refresh cannot spin a denied attempt")
 
         let staleController = HighChargeReminderDeliveryController()
+        staleController.observePermission(granted: false)
         var stalePosts: [Int] = []
-        var staleCompletions: [(Bool) -> Void] = []
+        var staleCompletions: [(NotificationPostResult) -> Void] = []
         evaluate(staleController, posts: &stalePosts, completions: &staleCompletions)
-        let oldFailure = staleCompletions[0]
+        let oldUnavailable = staleCompletions[0]
         evaluate(staleController, charge: 80, external: false,
                  posts: &stalePosts, completions: &staleCompletions)
         evaluate(staleController, posts: &stalePosts, completions: &staleCompletions)
         let newSuccess = staleCompletions[1]
-        newSuccess(true)
-        oldFailure(false)
+        newSuccess(.accepted)
+        oldUnavailable(.authorizationUnavailable)
         evaluate(staleController, posts: &stalePosts, completions: &staleCompletions)
         suite.expect(stalePosts == [80, 80] && !staleController.armed,
-               "an old failed completion cannot re-arm a newer accepted power session")
+               "an old denied completion after unplug cannot block a newer accepted power session")
 
         let resetController = HighChargeReminderDeliveryController()
+        resetController.observePermission(granted: false)
         var resetPosts: [Int] = []
-        var resetCompletions: [(Bool) -> Void] = []
+        var resetCompletions: [(NotificationPostResult) -> Void] = []
         evaluate(resetController, posts: &resetPosts, completions: &resetCompletions)
         let beforeDisable = resetCompletions[0]
         evaluate(resetController, enabled: false,
                  posts: &resetPosts, completions: &resetCompletions)
-        beforeDisable(false)
+        beforeDisable(.deliveryFailed)
         evaluate(resetController, posts: &resetPosts, completions: &resetCompletions)
         suite.expect(resetPosts == [80, 80],
                "disable invalidates an old completion and re-enable starts one fresh attempt")
-        resetCompletions[1](true)
+        let beforeReset = resetCompletions[1]
+        resetController.reset()
+        beforeReset(.authorizationUnavailable)
+        evaluate(resetController, posts: &resetPosts, completions: &resetCompletions)
+        resetCompletions[2](.accepted)
         evaluate(resetController, charge: nil, external: false,
                  posts: &resetPosts, completions: &resetCompletions)
         evaluate(resetController, posts: &resetPosts, completions: &resetCompletions)
-        suite.expect(resetPosts == [80, 80],
-               "an unknown reading preserves the accepted session's closed gate")
+        suite.expect(resetPosts == [80, 80, 80],
+               "reset makes a late denial inert and an unknown reading preserves the next accepted session")
 
         let contentStrings = FeatureStrings.monitorAlerts(.enUS)
         let realContent = HighChargeReminderContent.real(strings: contentStrings, charge: 80)

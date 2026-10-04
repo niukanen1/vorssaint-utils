@@ -2,6 +2,27 @@
 // Copyright (C) 2026 Vorssaint
 
 import Foundation
+import UserNotifications
+
+enum NotificationPostResult: Equatable {
+    case accepted
+    case authorizationPending
+    case authorizationUnavailable
+    case deliveryFailed
+
+    static func authorizationResult(for status: UNAuthorizationStatus) -> Self {
+        switch status {
+        case .authorized, .provisional:
+            return .accepted
+        case .notDetermined:
+            return .authorizationPending
+        case .denied, .ephemeral:
+            return .authorizationUnavailable
+        @unknown default:
+            return .authorizationUnavailable
+        }
+    }
+}
 
 /// Decides when a reading over its limit deserves a notification.
 ///
@@ -77,17 +98,25 @@ struct HighChargeReminderGate {
         armed = true
         sessionID = UUID()
     }
+
+    mutating func rearmCurrentSession() {
+        armed = true
+    }
 }
 
 struct HighChargeReminderDeliveryState {
     struct Attempt {
         fileprivate let id = UUID()
         fileprivate let sessionID: UUID
+        fileprivate let grantGeneration: UInt64
         let charge: Int
     }
 
     private(set) var gate = HighChargeReminderGate()
     private var activeAttemptID: UUID?
+    private var blockedSessionID: UUID?
+    private var observedPermissionGranted: Bool?
+    private var grantGeneration: UInt64 = 0
 
     mutating func begin(enabled: Bool,
                         charge: Int?,
@@ -100,24 +129,60 @@ struct HighChargeReminderDeliveryState {
                                         hasBattery: hasBattery,
                                         externalConnected: externalConnected,
                                         threshold: threshold)
-        if gate.sessionID != previousSessionID { activeAttemptID = nil }
+        if gate.sessionID != previousSessionID {
+            activeAttemptID = nil
+            blockedSessionID = nil
+        }
+        guard blockedSessionID != gate.sessionID else { return nil }
         guard let alertCharge else { return nil }
-        let attempt = Attempt(sessionID: gate.sessionID, charge: alertCharge)
+        let attempt = Attempt(sessionID: gate.sessionID,
+                              grantGeneration: grantGeneration,
+                              charge: alertCharge)
         activeAttemptID = attempt.id
         return attempt
     }
 
-    /// A failure may re-arm only the exact session and attempt it consumed.
+    /// A result may change only the exact session and attempt it consumed.
     @discardableResult
-    mutating func complete(_ attempt: Attempt, accepted: Bool) -> Bool {
+    mutating func complete(_ attempt: Attempt, result: NotificationPostResult) -> Bool {
         guard activeAttemptID == attempt.id, gate.sessionID == attempt.sessionID else { return false }
         activeAttemptID = nil
-        if !accepted { gate.reset() }
+        switch result {
+        case .accepted:
+            blockedSessionID = nil
+        case .authorizationPending, .deliveryFailed:
+            gate.rearmCurrentSession()
+        case .authorizationUnavailable:
+            if grantGeneration > attempt.grantGeneration {
+                blockedSessionID = nil
+                gate.rearmCurrentSession()
+            } else {
+                blockedSessionID = gate.sessionID
+            }
+        }
         return true
+    }
+
+    /// Only a newly observed grant reopens a session blocked by denial. The
+    /// first cached value establishes a baseline, and repeated `.granted`
+    /// refreshes do not create retry generations of their own.
+    mutating func observePermission(granted: Bool) {
+        guard let previous = observedPermissionGranted else {
+            observedPermissionGranted = granted
+            return
+        }
+        observedPermissionGranted = granted
+        guard granted, !previous else { return }
+        grantGeneration &+= 1
+        if blockedSessionID == gate.sessionID {
+            blockedSessionID = nil
+            gate.rearmCurrentSession()
+        }
     }
 
     mutating func reset() {
         activeAttemptID = nil
+        blockedSessionID = nil
         gate.reset()
     }
 }
@@ -134,15 +199,19 @@ final class HighChargeReminderDeliveryController {
                   hasBattery: Bool,
                   externalConnected: Bool,
                   threshold: Int,
-                  post: (Int, @escaping (Bool) -> Void) -> Void) {
+                  post: (Int, @escaping (NotificationPostResult) -> Void) -> Void) {
         guard let attempt = state.begin(enabled: enabled,
                                         charge: charge,
                                         hasBattery: hasBattery,
                                         externalConnected: externalConnected,
                                         threshold: threshold) else { return }
-        post(attempt.charge) { [weak self] accepted in
-            self?.state.complete(attempt, accepted: accepted)
+        post(attempt.charge) { [weak self] result in
+            self?.state.complete(attempt, result: result)
         }
+    }
+
+    func observePermission(granted: Bool) {
+        state.observePermission(granted: granted)
     }
 
     func reset() {

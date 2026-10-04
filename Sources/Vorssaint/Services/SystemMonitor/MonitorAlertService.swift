@@ -46,6 +46,16 @@ final class MonitorAlertService {
 
     private func startSinkIfNeeded() {
         guard cancellables.isEmpty else { return }
+        let permissions = Permissions.shared
+        // Establish the cached state before the first snapshot. The publisher
+        // then advances a generation only for a later denied→granted change.
+        highChargeDelivery.observePermission(granted: permissions.notifications == .granted)
+        permissions.$notifications
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] permission in
+                self?.highChargeDelivery.observePermission(granted: permission == .granted)
+            }
+            .store(in: &cancellables)
         SystemMonitor.shared.$snapshot
             .receive(on: DispatchQueue.main)
             .sink { [weak self] snapshot in
@@ -212,12 +222,13 @@ final class MonitorAlertService {
         return MetricFormat.temperature(celsius, unit: unit)
     }
 
-    static func sendHighChargeTest() {
+    static func sendHighChargeTest(completion: @escaping (NotificationPostResult) -> Void = { _ in }) {
         let strings = FeatureStrings.monitorAlerts(L10n.shared.language)
         let content = HighChargeReminderContent.test(strings: strings)
-        Notifier.requestPermission { granted in
-            guard granted else { return }
-            Notifier.post(title: content.title, body: content.body)
+        Notifier.requestPermission { _ in
+            // Read the real post-prompt status. A prompt/API error that leaves
+            // authorization undetermined must not be presented as a denial.
+            Notifier.postIfAuthorized(title: content.title, body: content.body, completion: completion)
         }
     }
 

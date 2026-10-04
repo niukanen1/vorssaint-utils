@@ -330,20 +330,34 @@ enum SettingsFeatureTests {
         let monitorAlertServiceSource = (try? String(
             contentsOfFile: "Sources/Vorssaint/Services/SystemMonitor/MonitorAlertService.swift",
             encoding: .utf8)) ?? ""
-        suite.expect(monitorAlertsSource.contains("AlertTile(title: text.highCharge")
+        let highChargeToken = monitorAlertsSource.range(of: "alertToken(text.highCharge")
+        let tokenGroupEnd = monitorAlertsSource.range(of: ".monitorTokenGroup()")
+        let firstTestAction = monitorAlertsSource.range(of: "Button(text.sendTest)")
+        let testOutsideTokenOptions: Bool
+        if let highChargeToken, let tokenGroupEnd, let firstTestAction {
+            testOutsideTokenOptions = highChargeToken.lowerBound < tokenGroupEnd.lowerBound
+                && tokenGroupEnd.lowerBound < firstTestAction.lowerBound
+        } else {
+            testOutsideTokenOptions = false
+        }
+        suite.expect(monitorAlertsSource.contains("alertToken(text.highCharge")
                 && monitorAlertsSource.contains("Toggle(text.highCharge")
-                && monitorAlertsSource.components(separatedBy: "MonitorAlertService.sendHighChargeTest").count == 3,
+                && monitorAlertsSource.components(separatedBy: "Button(text.sendTest)").count == 3
+                && testOutsideTokenOptions
+                && monitorAlertsSource.contains("private func sendHighChargeTest()")
+                && monitorAlertsSource.contains("testAuthorizationUnavailable = result == .authorizationUnavailable")
+                && monitorAlertsSource.contains("testAuthorizationUnavailable || (notificationsDenied && anyAlertEnabled)"),
                "both monitor alert surfaces offer high-charge controls and an independent test action")
         let testAction = monitorAlertServiceSource
             .components(separatedBy: "static func sendHighChargeTest").dropFirst().first?
             .components(separatedBy: "private func send(").first ?? ""
-        suite.expect(testAction.contains("Notifier.requestPermission()")
-                || testAction.contains("Notifier.requestPermission { granted in"),
-               "the test alert uses the existing notification permission flow")
-        suite.expect(testAction.contains("Notifier.post(")
+        suite.expect(testAction.contains("Notifier.requestPermission { _ in")
+                && testAction.contains("Notifier.postIfAuthorized("),
+               "the test alert reads the real post-prompt authorization outcome")
+        suite.expect(testAction.contains("completion: completion")
                 && !testAction.contains("UserDefaults")
                 && !testAction.contains("highChargeGate"),
-               "the test alert uses notification permission without touching defaults or the real session gate")
+               "the test alert reports denial without touching defaults or the real session gate")
         suite.expect(backupKeys.contains(DefaultsKey.switcherAppRules),
                "per-app switcher rules travel with the settings backup")
         suite.expect(Defaults.registeredDefaults[DefaultsKey.finderPasteImageAsFile] as? Bool == false

@@ -38,7 +38,7 @@ enum Notifier {
     /// instead of treating a dropped pre-authorization post as delivered.
     static func postIfAuthorized(title: String,
                                  body: String,
-                                 completion: @escaping (Bool) -> Void) {
+                                 completion: @escaping (NotificationPostResult) -> Void) {
         post(title: title, body: body, categoryIdentifier: nil, userInfo: [:], completion: completion)
     }
 
@@ -72,13 +72,13 @@ enum Notifier {
                              body: String,
                              categoryIdentifier: String?,
                              userInfo: [AnyHashable: Any],
-                             completion: ((Bool) -> Void)?) {
+                             completion: ((NotificationPostResult) -> Void)?) {
         let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { settings in
-            guard settings.authorizationStatus == .authorized
-                || settings.authorizationStatus == .provisional else {
+            let authorization = NotificationPostResult.authorizationResult(for: settings.authorizationStatus)
+            guard authorization == .accepted else {
                 log.notice("notification dropped: authorization status \(settings.authorizationStatus.rawValue)")
-                DispatchQueue.main.async { completion?(false) }
+                DispatchQueue.main.async { completion?(authorization) }
                 return
             }
             let content = UNMutableNotificationContent()
@@ -91,7 +91,7 @@ enum Notifier {
                 if let error {
                     log.error("notification delivery failed: \(error.localizedDescription, privacy: .public)")
                 }
-                DispatchQueue.main.async { completion?(error == nil) }
+                DispatchQueue.main.async { completion?(error == nil ? .accepted : .deliveryFailed) }
             }
         }
     }
