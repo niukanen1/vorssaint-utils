@@ -722,6 +722,27 @@ enum WindowLayoutFeatureTests {
             visibleFrame: CGRect(x: 0, y: 0, width: 100, height: 100), screenGap: 128)
                == CGRect(x: 10, y: 10, width: 80, height: 80),
                "green-button maximize shares the oversized-gap safe minimum")
+        let gapTarget = WindowMaximizerSupport.maximizeTarget(visibleFrame: visibleFrame, screenGap: 32)
+        let twoPointOvershoot = CGSize(width: gapTarget.width + 2, height: gapTarget.height)
+        let recoveryOrigin = WindowMaximizerSupport.approachOrigin(for: gapTarget.origin, tolerance: 4)
+        suite.expect(WindowMaximizerSupport.overshoots(twoPointOvershoot, target: gapTarget.size)
+                && !WindowMaximizerSupport.overshoots(twoPointOvershoot, target: visibleFrame.size)
+                && recoveryOrigin == CGPoint(x: gapTarget.minX - 4, y: gapTarget.minY - 4),
+               "Dock recovery measures and approaches the Screen-gap target rather than the full visible frame")
+
+        let maximizerSource = (try? String(
+            contentsOfFile: "Sources/Vorssaint/Services/WindowMaximizer.swift", encoding: .utf8)) ?? ""
+        let maximizerCode = maximizerSource.components(separatedBy: "\n")
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+        suite.expect(maximizerCode.contains("WindowMaximizerSupport.overshoots(actual.size, target: target.size)")
+                && maximizerCode.contains("size: target.size)")
+                && maximizerCode.contains("restoreFrame(fallback, on: window)\n            completion(false)"),
+               "settling recovers against the requested gap target and reports failure after restoring its fallback")
+        suite.expect(maximizerCode.contains("let wanted = AppFeature.windowMaximizer.isAvailable")
+                && maximizerCode.contains("!isExcluded(pid: candidate.pid)")
+                && maximizerCode.contains("frameStates.removeAll()"),
+               "disabled, excluded and stopped maximizers retain native handling and discard restore state")
 
         var maximizeState = WindowMaximizerFrameState<String>()
         let initial = maximizeState.beginMaximize(current: "O", target: "M0", isClose: ==)
@@ -745,12 +766,13 @@ enum WindowLayoutFeatureTests {
         var manualState = WindowMaximizerFrameState<String>()
         let manualInitial = manualState.beginMaximize(current: "O", target: "M0", isClose: ==)
         _ = manualState.complete(manualInitial, success: true)
-        let manualAttempt = manualState.beginMaximize(current: "X", target: "M0", isClose: ==)
+        let manualAttempt = manualState.beginMaximize(current: "X", target: "M32", isClose: ==)
         _ = manualState.complete(manualAttempt, success: true)
-        suite.expect(manualState.original == "X",
+        suite.expect(manualState.original == "X" && manualState.maximized == "M32",
                "a deliberate move away from the last effective target becomes the restore frame")
         let restoreManual = manualState.beginRestore()
-        suite.expect(manualState.original == "X" && manualState.complete(restoreManual, success: true),
+        suite.expect(manualState.original == "X" && manualState.complete(restoreManual, success: true)
+                && manualState.isEmpty,
                "a manually moved window restores to its deliberate frame")
 
         var rejectedState = WindowMaximizerFrameState<String>()
