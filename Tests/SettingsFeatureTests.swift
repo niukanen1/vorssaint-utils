@@ -272,6 +272,57 @@ enum SettingsFeatureTests {
         suite.expect(backupKeys.contains(DefaultsKey.monitorAlertHighCharge)
                 && backupKeys.contains(DefaultsKey.monitorAlertHighChargePercent),
                "the high-charge enable and threshold preferences travel with settings backups")
+        let portableHighCharge = SettingsBackupSupport.payload(appVersion: "integration") { key in
+            switch key {
+            case DefaultsKey.monitorAlertHighCharge: return true
+            case DefaultsKey.monitorAlertHighChargePercent: return 90
+            default: return nil
+            }
+        }
+        var restoredHighCharge: [String: Any]?
+        if let data = try? PropertyListSerialization.data(fromPropertyList: portableHighCharge,
+                                                          format: .xml, options: 0),
+           let parsed = try? PropertyListSerialization.propertyList(from: data,
+                                                                     options: [], format: nil) as? [String: Any] {
+            restoredHighCharge = SettingsBackupSupport.sanitizedSettings(from: parsed)
+        }
+        suite.expect(restoredHighCharge?[DefaultsKey.monitorAlertHighCharge] as? Bool == true
+                && restoredHighCharge?[DefaultsKey.monitorAlertHighChargePercent] as? Int == 90,
+               "a concrete portable backup round-trips an enabled 90-percent high-charge reminder")
+        let oldAlertBackup: [String: Any] = [
+            SettingsBackupSupport.formatVersionKey: SettingsBackupSupport.formatVersion,
+            SettingsBackupSupport.settingsKey: [DefaultsKey.monitorAlertBattery: true],
+        ]
+        let oldAlertSettings = SettingsBackupSupport.sanitizedSettings(from: oldAlertBackup) ?? [:]
+        suite.expect(oldAlertSettings[DefaultsKey.monitorAlertHighCharge] == nil
+                && oldAlertSettings[DefaultsKey.monitorAlertHighChargePercent] == nil
+                && Defaults.registeredDefaults[DefaultsKey.monitorAlertHighCharge] as? Bool == false
+                && Defaults.registeredDefaults[DefaultsKey.monitorAlertHighChargePercent] as? Int == 80,
+               "a backup from before the reminder restores through its off and 80-percent defaults")
+        let highChargeBackupKeys = backupKeys.filter { $0.localizedCaseInsensitiveContains("highcharge") }
+        suite.expect(Set(highChargeBackupKeys) == Set([DefaultsKey.monitorAlertHighCharge,
+                                                      DefaultsKey.monitorAlertHighChargePercent]),
+               "only the reminder preference and threshold travel, never gate sessions or delivery attempts")
+
+        let injectedMachinePaths: [String: Any] = [
+            SettingsBackupSupport.formatVersionKey: SettingsBackupSupport.formatVersion,
+            SettingsBackupSupport.settingsKey: [
+                DefaultsKey.recorderSaveFolder: "/Users/source/Movies",
+                DefaultsKey.screenshotSaveFolder: "/Users/source/Pictures",
+                DefaultsKey.musicBlockReplacementPath: "/Applications/Source Player.app",
+            ],
+        ]
+        let sanitizedMachinePaths = SettingsBackupSupport.sanitizedSettings(from: injectedMachinePaths) ?? [:]
+        let clearOnImport = SettingsBackupSupport.keysToClear(whenImporting: sanitizedMachinePaths)
+        suite.expect(sanitizedMachinePaths.isEmpty
+                && !clearOnImport.contains(DefaultsKey.recorderSaveFolder)
+                && !clearOnImport.contains(DefaultsKey.screenshotSaveFolder)
+                && !clearOnImport.contains(DefaultsKey.musicBlockReplacementPath),
+               "injected machine paths are dropped without clearing the receiving Mac's own paths")
+        suite.expect(backupKeys.contains(DefaultsKey.notchMascotEnabled)
+                && backupKeys.contains(AppFeature.notchMascot.availabilityKey)
+                && !backupKeys.contains(DefaultsKey.notchMascotBetaInstalled),
+               "companion choices and availability travel while its one-time beta migration marker stays local")
 
         let monitorAlertsSource = (try? String(
             contentsOfFile: "Sources/Vorssaint/UI/Settings/MonitorAlertsControls.swift",

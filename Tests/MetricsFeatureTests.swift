@@ -820,6 +820,15 @@ enum MetricsFeatureTests {
                 && testContent.body != realContent.body
                 && !testContent.body.contains("80"),
                "the localized test notification is explicit and does not claim a measured charge")
+        for language in AppLanguage.allCases {
+            let strings = FeatureStrings.monitorAlerts(language)
+            suite.expect(!strings.sendTest.isEmpty
+                    && !strings.highCharge.isEmpty
+                    && !strings.highChargeThreshold.isEmpty
+                    && !strings.highChargeTitle.isEmpty
+                    && strings.highChargeBodyFormat.contains("%d"),
+                   "high-charge controls and notifications are complete for \(language.rawValue)")
+        }
 
         // MARK: Uptime formatting
 
