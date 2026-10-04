@@ -763,6 +763,43 @@ enum WindowLayoutFeatureTests {
                 && maximizeState.isEmpty,
                "a successful gap-change maximize still restores the original frame")
 
+        var supersedingState = WindowMaximizerFrameState<String>()
+        let firstInFlight = supersedingState.beginMaximize(current: "O", target: "M", isClose: ==)
+        let secondInFlight = supersedingState.beginMaximize(current: "I", target: "M", isClose: ==)
+        suite.expect(supersedingState.original == "O" && supersedingState.maximized == "M"
+                && supersedingState.complete(secondInFlight, success: true)
+                && !supersedingState.complete(firstInFlight, success: false)
+                && !supersedingState.complete(firstInFlight, success: true),
+               "a superseding maximize keeps O and ignores either completion from the old animation")
+        let restoreAfterSupersession = supersedingState.beginRestore()
+        suite.expect(supersedingState.original == "O"
+                && supersedingState.complete(restoreAfterSupersession, success: true)
+                && supersedingState.isEmpty,
+               "a successful superseding maximize still restores O")
+
+        var restoreSupersessionState = WindowMaximizerFrameState<String>()
+        let completedMaximize = restoreSupersessionState.beginMaximize(current: "O", target: "M", isClose: ==)
+        _ = restoreSupersessionState.complete(completedMaximize, success: true)
+        let inFlightRestore = restoreSupersessionState.beginRestore()
+        let maximizeDuringRestore = restoreSupersessionState.beginMaximize(current: "I", target: "M", isClose: ==)
+        suite.expect(restoreSupersessionState.original == "O"
+                && restoreSupersessionState.complete(maximizeDuringRestore, success: true)
+                && !restoreSupersessionState.complete(inFlightRestore, success: true),
+               "maximizing during an in-flight restore preserves O and supersedes its completion")
+        let failedSupersession = restoreSupersessionState.beginRestore()
+        let newerSupersession = restoreSupersessionState.beginMaximize(current: "J", target: "M", isClose: ==)
+        suite.expect(restoreSupersessionState.complete(newerSupersession, success: false)
+                && restoreSupersessionState.original == "O"
+                && restoreSupersessionState.maximized == "M"
+                && !restoreSupersessionState.complete(failedSupersession, success: false),
+               "a failed newer attempt restores O/M bookkeeping and leaves the older completion stale")
+        let lateAfterReset = restoreSupersessionState.beginMaximize(current: "I", target: "M", isClose: ==)
+        restoreSupersessionState.reset()
+        suite.expect(!restoreSupersessionState.complete(lateAfterReset, success: true)
+                && !restoreSupersessionState.complete(inFlightRestore, success: false)
+                && restoreSupersessionState.isEmpty,
+               "reset makes every late maximize or restore completion inert")
+
         var manualState = WindowMaximizerFrameState<String>()
         let manualInitial = manualState.beginMaximize(current: "O", target: "M0", isClose: ==)
         _ = manualState.complete(manualInitial, success: true)
@@ -783,8 +820,8 @@ enum WindowLayoutFeatureTests {
         let newerAttempt = rejectedState.beginMaximize(current: "X", target: "M32", isClose: ==)
         _ = rejectedState.complete(newerAttempt, success: true)
         suite.expect(!rejectedState.complete(staleAttempt, success: false)
-                && rejectedState.original == "X" && rejectedState.maximized == "M32",
-               "a stale failure cannot roll back a newer successful attempt")
+                && rejectedState.original == "O" && rejectedState.maximized == "M32",
+               "a superseding attempt preserves O and a stale failure cannot roll it back")
         rejectedState.reset()
         suite.expect(!rejectedState.complete(newerAttempt, success: false) && rejectedState.isEmpty,
                "a completion arriving after stop/reset cannot resurrect frame state")

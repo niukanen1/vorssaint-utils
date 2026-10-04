@@ -55,11 +55,15 @@ struct WindowMaximizerFrameState<Frame> {
     mutating func beginMaximize(current: Frame,
                                 target: Frame,
                                 isClose: (Frame, Frame) -> Bool) -> Attempt {
+        let supersedesActiveAttempt = activeAttemptID != nil
         let attempt = Attempt(kind: .maximize,
                               previousOriginal: original,
                               previousMaximized: maximized)
         let gapChangedWhileMaximized = maximized.map { isClose(current, $0) } ?? false
-        if !gapChangedWhileMaximized { original = current }
+        // A frame sampled during our own maximize/restore animation is neither
+        // a deliberate manual position nor a safe restore target. Once the
+        // attempt completes, a later manual move is still allowed to replace it.
+        if !supersedesActiveAttempt, !gapChangedWhileMaximized { original = current }
         maximized = target
         activeAttemptID = attempt.id
         return attempt
