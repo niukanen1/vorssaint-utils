@@ -20,6 +20,8 @@ final class NotchLockScreenService {
         var player: CGRect?
         var row: CGRect?
         var island: CGRect?
+        /// The island itself inside its window, at the camera's fitted size.
+        var islandSurface: CGRect?
     }
 
     private let model = NotchLockScreenModel()
@@ -84,8 +86,11 @@ final class NotchLockScreenService {
         // The island's own reading of its camera, with the fit the person set.
         let geometry = NotchService.shared.geometry
         if geometry.isNotched, NSScreen.screens.contains(where: { $0.frame == geometry.screen && $0.safeAreaInsets.top > 0 }) {
-            frames.island = NotchLockScreenLayout.islandFrame(in: geometry.screen, cameraWidth: geometry.bareCutout.width,
-                                                              cameraHeight: geometry.bareCutout.height)
+            let surface = NotchLockScreenLayout.islandSurface(
+                in: geometry.screen, cameraWidth: geometry.bareCutout.width, cameraHeight: geometry.bareCutout.height,
+                wing: geometry.lockScreenMusicGeometry.compactActivityWingWidth)
+            frames.islandSurface = surface
+            frames.island = surface.map(NotchLockScreenLayout.islandFrame(around:))
         }
         return frames
     }
@@ -114,9 +119,13 @@ final class NotchLockScreenService {
         if let frame = frames.row {
             scene.append(Self.makePanel(frame: frame, content: NotchLockScreenActivities(model: model, size: frame.size)))
         }
-        let island = frames.island.map { frame in
-            Self.makePanel(frame: frame, content: NotchLockScreenIsland(
-                model: model, size: frame.size, cameraWidth: NotchService.shared.geometry.bareCutout.width))
+        let island = frames.island.flatMap { frame in
+            frames.islandSurface.map { surface in
+                Self.makePanel(frame: frame, content: NotchLockScreenIsland(
+                    model: model, size: surface.size, cameraWidth: NotchService.shared.geometry.bareCutout.width,
+                    geometry: NotchService.shared.geometry.lockScreenMusicGeometry,
+                    window: frame.size, origin: CGPoint(x: surface.minX - frame.minX, y: frame.maxY - surface.maxY)))
+            }
         }
         let panels = scene + [island].compactMap { $0 }
         guard !panels.isEmpty else { space.close(); return }

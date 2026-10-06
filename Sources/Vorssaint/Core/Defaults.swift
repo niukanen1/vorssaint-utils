@@ -2058,11 +2058,13 @@ enum Defaults {
     /// On a beta, people with the Command Bar get the island's companion,
     /// which can be its face, installed and on, once: uninstalled afterwards,
     /// it stays out. A clean install waits for its setup to finish, since
-    /// setup picks the installed features afresh.
+    /// setup picks the installed features afresh. It lives in the island, so
+    /// someone without the island gets nothing.
     static func installsCompanionForBeta(in defaults: UserDefaults, isBeta: Bool = AppInfo.isBeta) -> Bool {
         isBeta && defaults.bool(forKey: DefaultsKey.hasOnboarded)
             && !defaults.bool(forKey: DefaultsKey.notchMascotBetaInstalled)
             && AppFeature.commandBar.isAvailable(in: defaults)
+            && AppFeature.notch.isAvailable(in: defaults)
     }
 
     static func installCompanionForBetaCommandBar(in defaults: UserDefaults, isBeta: Bool = AppInfo.isBeta) {
