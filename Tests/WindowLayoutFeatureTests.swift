@@ -928,6 +928,77 @@ enum WindowLayoutFeatureTests {
                 && recoveryOrigin == CGPoint(x: gapTarget.minX - 4, y: gapTarget.minY - 4),
                "Dock recovery measures and approaches the Screen-gap target rather than the full visible frame")
 
+        let toggleTarget32 = WindowMaximizerSupport.maximizeTarget(visibleFrame: visibleFrame, screenGap: 32)
+        let toggleTarget64 = WindowMaximizerSupport.maximizeTarget(visibleFrame: visibleFrame, screenGap: 64)
+        for original in [CGRect(x: 100, y: 100, width: 320, height: 80),
+                         CGRect(x: 100, y: 100, width: 80, height: 320),
+                         CGRect(x: 100, y: 100, width: 320, height: 60),
+                         CGRect(x: -1600, y: -100, width: 640, height: 480)] {
+            var toggleState = WindowMaximizerFrameState<CGRect>()
+            suite.expect(WindowMaximizerSupport.toggleAction(
+                current: original, maximized: toggleTarget32, original: nil, tolerance: 0)
+                    == .maximize(toggleTarget32),
+                "the production toggle first maximizes a valid original, including a small or negative-origin frame")
+            let firstToggle = toggleState.beginMaximize(current: original, target: toggleTarget32, isClose: ==)
+            _ = toggleState.complete(firstToggle, success: true)
+            suite.expect(WindowMaximizerSupport.toggleAction(
+                current: toggleTarget32, maximized: toggleTarget32,
+                original: toggleState.original, tolerance: 0) == .restore(original),
+                "the production toggle restores the exact original even when a dimension is 80pt or less")
+            suite.expect(WindowMaximizerSupport.toggleAction(
+                current: toggleTarget32, maximized: toggleTarget64,
+                original: toggleState.original, tolerance: 0) == .maximize(toggleTarget64),
+                "a changed Screen gap selects the new maximize target before restoring")
+            let changedToggle = toggleState.beginMaximize(current: toggleTarget32,
+                                                          target: toggleTarget64, isClose: ==)
+            _ = toggleState.complete(changedToggle, success: true)
+            suite.expect(WindowMaximizerSupport.toggleAction(
+                current: toggleTarget64, maximized: toggleTarget64,
+                original: toggleState.original, tolerance: 0) == .restore(original),
+                "maximize, live gap change and the next toggle preserve the exact small original")
+            let failedToggle = toggleState.beginRestore()
+            _ = toggleState.complete(failedToggle, success: false)
+            suite.expect(WindowMaximizerSupport.toggleAction(
+                current: toggleTarget64, maximized: toggleTarget64,
+                original: toggleState.original, tolerance: 0) == .restore(original),
+                "a failed small-frame restore keeps the exact target for the next toggle")
+            let completedToggle = toggleState.beginRestore()
+            suite.expect(toggleState.complete(completedToggle, success: true) && toggleState.isEmpty,
+                "a successful small-frame restore clears the completed state")
+        }
+        let manuallyMovedSmallFrame = CGRect(x: -1200, y: 50, width: 320, height: 60)
+        var movedToggleState = WindowMaximizerFrameState<CGRect>()
+        let beforeMoveToggle = movedToggleState.beginMaximize(
+            current: CGRect(x: 100, y: 100, width: 600, height: 400), target: toggleTarget32, isClose: ==)
+        _ = movedToggleState.complete(beforeMoveToggle, success: true)
+        suite.expect(WindowMaximizerSupport.toggleAction(
+            current: manuallyMovedSmallFrame, maximized: toggleTarget64,
+            original: movedToggleState.original, tolerance: 0) == .maximize(toggleTarget64),
+            "a deliberate move selects maximize instead of prematurely restoring an older frame")
+        let afterMoveToggle = movedToggleState.beginMaximize(
+            current: manuallyMovedSmallFrame, target: toggleTarget64, isClose: ==)
+        _ = movedToggleState.complete(afterMoveToggle, success: true)
+        suite.expect(WindowMaximizerSupport.toggleAction(
+            current: toggleTarget64, maximized: toggleTarget64,
+            original: movedToggleState.original, tolerance: 0) == .restore(manuallyMovedSmallFrame),
+            "a deliberately moved small window becomes the exact restore target")
+        for invalidFrame in [CGRect.zero,
+                             CGRect(x: 0, y: 0, width: 0, height: 80),
+                             CGRect(x: 0, y: 0, width: -1, height: 80),
+                             CGRect(x: CGFloat.nan, y: 0, width: 80, height: 80),
+                             CGRect(x: 0, y: 0, width: CGFloat.infinity, height: 80),
+                             CGRect(x: 0, y: 0, width: 80, height: CGFloat.nan)] {
+            suite.expect(WindowMaximizerSupport.toggleAction(
+                current: invalidFrame, maximized: toggleTarget32, original: nil, tolerance: 0) == nil
+                    && WindowMaximizerSupport.toggleAction(
+                        current: toggleTarget32, maximized: invalidFrame, original: nil, tolerance: 0) == nil,
+                "the production toggle never selects an empty, negative or nonfinite current/maximize frame")
+            suite.expect(WindowMaximizerSupport.toggleAction(
+                current: toggleTarget32, maximized: toggleTarget32,
+                original: invalidFrame, tolerance: 0) == .maximize(toggleTarget32),
+                "an invalid remembered frame never becomes an AX restore target")
+        }
+
         let maximizerSource = (try? String(
             contentsOfFile: "Sources/Vorssaint/Services/WindowMaximizer.swift", encoding: .utf8)) ?? ""
         let maximizerCode = maximizerSource.components(separatedBy: "\n")

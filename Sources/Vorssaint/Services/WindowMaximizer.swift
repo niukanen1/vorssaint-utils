@@ -179,10 +179,15 @@ final class WindowMaximizer: ObservableObject {
         )
         let maximized = axFrame(fromAppKit: maximizedFrame)
         var state = frameStates[target.windowID] ?? WindowMaximizerFrameState()
-        if current.isClose(to: maximized, tolerance: frameTolerance),
-           let original = state.original,
-           original.size.width > 80,
-           original.size.height > 80 {
+        guard let action = WindowMaximizerSupport.toggleAction(
+            current: CGRect(origin: current.origin, size: current.size),
+            maximized: CGRect(origin: maximized.origin, size: maximized.size),
+            original: state.original.map { CGRect(origin: $0.origin, size: $0.size) },
+            tolerance: frameTolerance
+        ) else { return false }
+        switch action {
+        case .restore(let frame):
+            let original = AXFrame(origin: frame.origin, size: frame.size)
             let attempt = state.beginRestore()
             frameStates[target.windowID] = state
             let started = changeFrame(to: original, of: target) { [weak self] success in
@@ -190,7 +195,8 @@ final class WindowMaximizer: ObservableObject {
             }
             if !started { completeFrameAttempt(attempt, windowID: target.windowID, success: false) }
             return started
-        } else {
+        case .maximize(let frame):
+            let maximized = AXFrame(origin: frame.origin, size: frame.size)
             let attempt = state.beginMaximize(current: current, target: maximized) {
                 $0.isClose(to: $1, tolerance: frameTolerance)
             }

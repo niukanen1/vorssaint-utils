@@ -5,6 +5,36 @@ import CoreGraphics
 import Foundation
 
 enum WindowMaximizerSupport {
+    enum ToggleAction: Equatable {
+        case maximize(CGRect)
+        case restore(CGRect)
+    }
+
+    /// A captured original may be smaller than the minimum maximize target.
+    /// Restore its exact geometry, provided it is still a valid AX frame.
+    static func toggleAction(current: CGRect,
+                             maximized: CGRect,
+                             original: CGRect?,
+                             tolerance: CGFloat) -> ToggleAction? {
+        guard validFrame(current), validFrame(maximized),
+              tolerance.isFinite, tolerance >= 0 else { return nil }
+        if abs(current.origin.x - maximized.origin.x) <= tolerance,
+           abs(current.origin.y - maximized.origin.y) <= tolerance,
+           abs(current.size.width - maximized.size.width) <= tolerance,
+           abs(current.size.height - maximized.size.height) <= tolerance,
+           let original, validFrame(original) {
+            return .restore(original)
+        }
+        return .maximize(maximized)
+    }
+
+    private static func validFrame(_ frame: CGRect) -> Bool {
+        frame.origin.x.isFinite && frame.origin.y.isFinite
+            && frame.size.width.isFinite && frame.size.height.isFinite
+            && frame.size.width > 0 && frame.size.height > 0
+            && frame.maxX.isFinite && frame.maxY.isFinite
+    }
+
     /// The green-button override shares Window Layout's screen-edge gap and
     /// its oversized-gap clamp, even when Window Layout itself is unavailable.
     static func maximizeTarget(visibleFrame: CGRect, screenGap: Int) -> CGRect {
