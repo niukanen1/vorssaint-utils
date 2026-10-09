@@ -143,7 +143,7 @@ enum DefaultsKey {
     static let releaseNotesOnUpdate = "releaseNotesOnUpdate" // show What's New after an update
     static let appVolumes = "appVolumes"                  // [bundle id: 0...2]
     static let appOutputDevices = "appOutputDevices"      // [bundle id: audio device UID]
-    static let mixerUniversalOutputDevice = "mixerUniversalOutputDevice" // last manual all-apps output UID
+    static let mixerUniversalOutputDevice = "mixerUniversalOutputDevice" // retired: all-apps output saved by 3.4.1 betas
     static let mixerShowFinder = "mixerShowFinder"
     static let mixerAppArrangement = "mixerAppArrangement"
     static let mixerHideInactiveApps = "mixerHideInactiveApps"
@@ -664,6 +664,7 @@ enum DefaultsKey {
     static let screenshotDefaultAction = "screenshotDefaultAction"
     static let screenshotIncludePointer = "screenshotIncludePointer"
     static let screenshotShowLastRegion = "screenshotShowLastRegion"
+    static let screenshotHighlightWindows = "screenshotHighlightWindows"
     static let screenshotLoupeStartsOn = "screenshotLoupeStartsOn"
     static let screenshotLoupeRememberZoom = "screenshotLoupeRememberZoom"
     static let screenshotLoupeDefaultZoom = "screenshotLoupeDefaultZoom"
@@ -1009,13 +1010,14 @@ enum BrightnessUpdatePromptInfo {
 }
 
 enum SupportUpdateIntroInfo {
-    /// The stable release series that gets this invitation. Patch updates share
-    /// one completion marker, including when someone skips the initial release.
-    static let releaseVersion = "3.4.0"
+    /// The stable release that gets this invitation, and the patches after it,
+    /// which share one completion marker. 3.4.1 asks again, including people
+    /// who saw it in 3.4.0, whose marker differs.
+    static let releaseVersion = "3.4.1"
 
     // Older beta onboarding wrote the release version before this screen was
     // available. A distinct completion marker keeps those upgraders eligible.
-    static let seenVersion = "3.4.0-support"
+    static let seenVersion = "3.4.1-support"
 
     static func matchesRelease(_ appVersion: String) -> Bool {
         guard let version = UpdateServiceSupport.SemanticVersion(raw: appVersion),
@@ -1840,6 +1842,7 @@ enum Defaults {
         DefaultsKey.screenshotDefaultAction: "",
         DefaultsKey.screenshotIncludePointer: false,
         DefaultsKey.screenshotShowLastRegion: true,
+        DefaultsKey.screenshotHighlightWindows: true,
         DefaultsKey.screenshotLoupeStartsOn: false,
         DefaultsKey.screenshotLoupeRememberZoom: false,
         DefaultsKey.screenshotLoupeDefaultZoom: 1.0,
@@ -1942,6 +1945,7 @@ enum Defaults {
         migrateBatteryTemperatureVisibility(in: defaults)
         migrateSwitcherPreviewSize(in: defaults)
         migrateSwitcherPreviewExcludedApps(in: defaults)
+        migrateNotchWatchAvailability(in: defaults)
         defaults.register(defaults: registeredDefaults)
         defaults.register(defaults: AppFeature.availabilityDefaults)
         activateBetaChannelIfRunningBeta(in: defaults)
@@ -1960,6 +1964,9 @@ enum Defaults {
         recheckBrightnessDDCWriteOnlyPaths(in: defaults)
         hideScratchpadControlOnce(in: defaults)
         hideKeyboardLightControlOnce(in: defaults)
+        // The "all apps" output choice now lasts one session; a saved one
+        // would move apps that chose their own output after every launch.
+        defaults.removeObject(forKey: DefaultsKey.mixerUniversalOutputDevice)
     }
 
     /// Keep the implicit on choice of an existing island profile. A new
@@ -2166,6 +2173,16 @@ enum Defaults {
         }
         defaults.set(defaults.bool(forKey: DefaultsKey.scrollInverterEnabled),
                      forKey: DefaultsKey.scrollInverterHorizontalEnabled)
+    }
+
+    /// Watch arrived installed, as one of the island's extensions. Whoever
+    /// left the island out keeps it out: an extension installed on its own
+    /// would bring the Dynamic Island page back to Settings after an update.
+    static func migrateNotchWatchAvailability(in defaults: UserDefaults) {
+        guard defaults.object(forKey: AppFeature.notchWatch.availabilityKey) == nil,
+              defaults.object(forKey: AppFeature.notch.availabilityKey) as? Bool == false
+        else { return }
+        defaults.set(false, forKey: AppFeature.notchWatch.availabilityKey)
     }
 
     /// Linear scrolling reached development builds installed, before new
