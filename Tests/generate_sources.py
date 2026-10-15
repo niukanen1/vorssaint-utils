@@ -47,6 +47,14 @@ def availability_declaration(path, prefix):
 
 def main():
     OUTPUT.mkdir(parents=True, exist_ok=True)
+    recorder = "Sources/Vorssaint/Services/Recorder/ScreenRecorderService.swift"
+    write("RecorderPreparation.swift", "import Foundation\nextension RecorderPreparationTests {\n"
+          + "final class Service: Fixture {\n"
+          + "".join(declaration(recorder, prefix).replace("private func", "func", 1)
+                    for prefix in ["    private func beginRecording(", "    private func pendingStartIsAuthorized(",
+                                   "    private func invalidatePendingStart()", "    var hasActiveCapture:",
+                                   "    func stopOrCancelActiveCapture()", "    func prepareForSelection()"])
+          + "}\n}\n")
     write("SwitcherFullscreenScope.swift", "import AppKit\nimport ApplicationServices\nimport CoreGraphics\n"
           + "extension SwitcherFullscreenScopeTests.Enumerator {\n"
           + "".join(declaration("Sources/Vorssaint/Services/Switcher/WindowEnumerator.swift", prefix)
@@ -83,6 +91,11 @@ def main():
                         "    private enum WindowReading {",
                         "    private static func accessibilityWindows(for pid: pid_t,",
                         "    private static func appendUnique(", "    private static func contains("])
+          + "}\n")
+    write("TransientPasteRuntime.swift", "import AppKit\nimport Carbon.HIToolbox\nimport CoreGraphics\n"
+          + "extension TransientPasteTests {\n"
+          + declaration("Sources/Vorssaint/Services/TransientPaste.swift", "final class TransientPaste {")
+              .replace("NSPasteboard.general", "TransientPasteTests.pasteboard")
           + "}\n")
     general = "Sources/Vorssaint/UI/Settings/GeneralSettings.swift"
     write("LaunchAtLoginSettings.swift", "import Foundation\n"
@@ -418,6 +431,17 @@ def main():
           + declaration("Sources/Vorssaint/Services/Clipboard/ClipboardIgnoredApps.swift",
                         "    func sourceSinceLastCheck(")
           + "}\n")
+    disk_image = "Sources/Vorssaint/Services/DiskImageInstaller/DiskImageInstallerService.swift"
+    write("DiskImageHomebrew.swift", "import Foundation\nimport Darwin\nextension DiskImageHomebrewTests {\n"
+          + "".join(declaration(disk_image, prefix).replace("private struct", "struct", 1)
+                    for prefix in ["    private struct FileIdentity:", "    private struct Candidate {",
+                                   "    private struct CommandResult {"])
+          + "final class Service: Fixture {\n"
+          + "".join(declaration(disk_image, prefix).replace("private ", "", 1)
+                    for prefix in ["    private func inspect(", "    private func candidate(",
+                                   "    private static func isHomebrewImage(",
+                                   "    private static func fileIdentity(", "    private static func validBundle("])
+          + "}\n}\n")
     cleaner = "Sources/Vorssaint/Services/URLCleanerService.swift"
     write("URLCleanerRewrite.swift", "import AppKit\n"
           + "extension ClipboardFeatureTests.URLCleanerHost {\n"
@@ -429,6 +453,12 @@ def main():
           + declaration("Sources/Vorssaint/Services/CommandBar/CommandBarCatalog.swift",
                         "    private static func copyAnswer(").replace("private static", "static", 1)
           + "}\n")
+    write("CommandBarSelection.swift", "import Foundation\nextension CommandBarSelectionTests {\n"
+          + declaration("Sources/Vorssaint/Services/CommandBar/CommandBarSupport.swift", "enum CommandBarText {")
+          + "final class Catalog: Fixture {\n"
+          + declaration("Sources/Vorssaint/Services/CommandBar/CommandBarCatalog.swift",
+                        "    static func selectionEntries(")
+          + "}\n}\n")
     write("CommandBarBrightness.swift", "import AppKit\n"
           + "extension CommandBarFeatureTests.BrightnessHost {\n"
           + declaration("Sources/Vorssaint/Services/CommandBar/CommandBarCatalog.swift",
@@ -677,6 +707,12 @@ def main():
           + "}\n}\n")
 
     updates = "Sources/Vorssaint/Services/AppUpdates/AppUpdatesService.swift"
+    write("AppUpdateHandoff.swift", "import Foundation\nextension AppUpdateHandoffTests {\n"
+          + "final class Service: State {\n"
+          + "".join(declaration(updates, prefix).replace("private func", "func", 1)
+                    for prefix in ["    var updateHandoffPending:", "    private func handOff(",
+                                   "    func applicationBecameActive()", "    func consumeUpdateHandoffReturn()"])
+          + "}\n}\n")
     loader = "Sources/Vorssaint/Services/AppUpdates/AppUpdateFeedLoader.swift"
     # Only the network configuration, clock and declaration visibility change.
     # The loader, batch loop, catalog matching and fallback resolution stay verbatim.
