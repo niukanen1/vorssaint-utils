@@ -30,9 +30,12 @@ enum BrowserPickerBrowsers {
     static let profileBrowsers: [String: (kind: ProfileKind, folder: String)] = [
         "com.google.Chrome": (.chromium, "Google/Chrome"),
         "com.google.Chrome.beta": (.chromium, "Google/Chrome Beta"),
+        "com.google.Chrome.dev": (.chromium, "Google/Chrome Dev"),
         "com.google.Chrome.canary": (.chromium, "Google/Chrome Canary"),
         "com.microsoft.edgemac": (.chromium, "Microsoft Edge"),
         "com.brave.Browser": (.chromium, "BraveSoftware/Brave-Browser"),
+        "com.brave.Browser.beta": (.chromium, "BraveSoftware/Brave-Browser-Beta"),
+        "com.brave.Browser.nightly": (.chromium, "BraveSoftware/Brave-Browser-Nightly"),
         "com.vivaldi.Vivaldi": (.chromium, "Vivaldi"),
         "org.chromium.Chromium": (.chromium, "Chromium"),
         "org.mozilla.firefox": (.firefox, "Firefox"),

@@ -138,14 +138,14 @@ extension BrowserPickerStrings {
         unavailableTargetFormat: "%@ (indisponível)",
         newRuleTitle: "Nova regra",
         siteLabel: "Site",
-        pathLabel: "Só no caminho",
+        pathLabel: "Só dentro do caminho",
         pathPlaceholder: "Opcional, como /equipe",
         openInLabel: "Abrir em",
         chooseBrowser: "Escolher…",
         siteHint: "Digite um site como example.com. Os subdomínios dele também entram.",
         invalidSite: "Isto não é um endereço de site. Digite um como example.com.",
         coversSiteFormat: "Vale para todas as páginas de %@ e seus subdomínios.",
-        coversPathFormat: "Vale para as páginas de %1$@ em %2$@.",
+        coversPathFormat: "Vale para as páginas de %1$@ dentro de %2$@.",
         linkMatches: "Este link corresponde.",
         linkDoesNotMatch: "Este link não corresponde.",
         cancel: "Cancelar",
@@ -158,7 +158,7 @@ extension BrowserPickerStrings {
         rememberHint: "Segure ⌥ para sempre abrir este site aqui",
         targetMissingFormat: "%@ não está disponível. Escolha onde abrir este link.",
         openFailedFormat: "%@ não conseguiu abrir este link.",
-        profilesWithheldFormat: "O macOS não deixou o Vorssaint ler os perfis de %@, então cada um aparece como um só navegador. Permita o acesso quando o macOS perguntar ou ative o Acesso Total ao Disco."
+        profilesWithheldFormat: "O macOS não deixou o Vorssaint ler os perfis de %@, então cada navegador aparece como uma única opção, sem perfis. Permita o acesso quando o macOS perguntar ou ative o Acesso Total ao Disco."
     )
 
     static let tr = BrowserPickerStrings(
