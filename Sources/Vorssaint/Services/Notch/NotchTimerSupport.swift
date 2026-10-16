@@ -198,6 +198,7 @@ enum NotchTimerSupport {
         static let spacing: CGFloat = 14
         static let labelSize: CGFloat = 12
         static let labelPadding: CGFloat = 4
+        static let menuLabelPadding: CGFloat = 2
         static let menuSpacing: CGFloat = 3
         static let menuMinimumScale: CGFloat = 0.75
     }
