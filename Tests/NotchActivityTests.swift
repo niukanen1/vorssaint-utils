@@ -604,23 +604,31 @@ enum NotchActivityTests {
                        + "camera=180.000, natural=\(points(menu)), available=\(points(band.side))")
             // Wider cameras still wrapped by the compact preset leave less;
             // the name may narrow there, never lose letters.
-            let cameraCases = [CGFloat(185), 208, 210, 224].compactMap { camera -> (camera: CGFloat, side: CGFloat)? in
+            let cameraWidths: [CGFloat] = [185, 208, 210, 224]
+            let cameraCases = cameraWidths.compactMap { camera -> (camera: CGFloat, side: CGFloat)? in
                 let candidate = NotchBand(geometry: NotchGeometry(
                     screen: CGRect(x: 0, y: 0, width: 1710, height: 1112), safeAreaTop: 32,
                     cameraWidth: camera), contentWidth: geometry.contentWidth)
                 return candidate.besideCamera ? (camera, candidate.side) : nil
             }
-            let narrowest = cameraCases.min { $0.side < $1.side }
-            let narrowestSide = narrowest?.side ?? band.side
+            let cases = cameraCases.map { "\(points($0.camera)):\(points($0.side))" }.joined(separator: ",")
+            guard let narrowest = cameraCases.min(by: { $0.side < $1.side }) else {
+                suite.expect(false, "the compact preset wraps the wide cameras: \(components), wrapped-cameras=\(cases)")
+                continue
+            }
+            suite.expect(cameraCases.count == cameraWidths.count && narrowest.camera == 224 && narrowest.side > 0,
+                   "the compact preset wraps every wide camera and 224 points is limiting: \(components), "
+                       + "limiting-camera=\(points(narrowest.camera)), available=\(points(narrowest.side)), wrapped-cameras=\(cases)")
+            let narrowestSide = narrowest.side
             let narrowed = labelWidth * layout.menuMinimumScale + layout.menuSpacing + chevron + menuPadding
             suite.expect(narrowed <= narrowestSide,
                    "every mode's name fits beside the widest camera the compact preset wraps: \(components), "
-                       + "camera=\(points(narrowest?.camera ?? 180)), scale=\(points(layout.menuMinimumScale)), "
+                       + "camera=\(points(narrowest.camera)), scale=\(points(layout.menuMinimumScale)), "
                        + "scaled=\(points(narrowed)), available=\(points(narrowestSide))")
-            let cases = cameraCases.map { "\(points($0.camera)):\(points($0.side))" }.joined(separator: ",")
             print("TIMER MODE MENU FIT \(components), camera=180.000, natural=\(points(menu)), "
                 + "available=\(points(band.side)), scale=\(points(layout.menuMinimumScale)), "
-                + "scaled=\(points(narrowed)), wrapped-cameras=\(cases)")
+                + "scaled=\(points(narrowed)), limiting-camera=\(points(narrowest.camera)), "
+                + "limiting-available=\(points(narrowestSide)), wrapped-cameras=\(cases)")
             let startFont = NSFont.systemFont(ofSize: NotchTimerSupport.StartButton.labelSize, weight: .semibold)
             let start = (text.start as NSString).size(withAttributes: [.font: startFont]).width + NotchTimerSupport.StartButton.padding * 2
             suite.expect(start + button <= band.side,
