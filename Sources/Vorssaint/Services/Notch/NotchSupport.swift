@@ -95,11 +95,13 @@ struct NotchClipboardPastePress: Equatable {
     let serial: Int
     let index: Int
 
-    /// The digit row by physical key, so every layout keeps the shortcut.
+    /// The digit row by physical key, so every layout keeps the shortcut,
+    /// and the numeric keypad's digits.
     static func index(keyCode: UInt16, commandOnly: Bool) -> Int? {
         guard commandOnly else { return nil }
         let digitKeys: [UInt16] = [18, 19, 20, 21, 23, 22, 26, 28, 25]
-        return digitKeys.firstIndex(of: keyCode)
+        let keypadKeys: [UInt16] = [83, 84, 85, 86, 87, 88, 89, 91, 92]
+        return digitKeys.firstIndex(of: keyCode) ?? keypadKeys.firstIndex(of: keyCode)
     }
 }
 
@@ -217,6 +219,9 @@ extension NotchModule {
 struct NotchBand: Equatable {
     /// Room every control keeps from the camera.
     static let cameraClearance: CGFloat = 8
+    /// The island's way to its sections: a 28-point button and the row's
+    /// spacing after it.
+    static let sectionsButtonRoom: CGFloat = 28 + 6
 
     /// The row wraps a physical camera, half of it on either side.
     var besideCamera = false
@@ -224,6 +229,9 @@ struct NotchBand: Equatable {
     /// Each side's width beside the camera, past the clearance; without a
     /// camera, the whole row.
     var side: CGFloat = 0
+    /// The island's way to its sections leads the row, before the page's
+    /// own controls.
+    var sectionsButton = false
 
     init() {}
 
@@ -232,7 +240,11 @@ struct NotchBand: Equatable {
         height = geometry.headerRowHeight
         side = besideCamera
             ? max(0, (contentWidth - geometry.headerCameraGap) / 2 - Self.cameraClearance) : max(0, contentWidth)
+        sectionsButton = geometry.rowShowsSectionsButton
     }
+
+    /// What the leading side leaves the page's own controls.
+    var leadingRoom: CGFloat { max(0, side - (sectionsButton ? Self.sectionsButtonRoom : 0)) }
 }
 
 /// Shared measurements keep the window's content budget and its SwiftUI
@@ -264,6 +276,14 @@ enum NotchLayout {
     static let shortcutHeight: CGFloat = 74
     static let shortcutWidth: CGFloat = 76
     static let shortcutSpacing: CGFloat = 8
+    /// Tiles that would just miss the island's width close their gaps, down
+    /// to none, before their rail scrolls: each tile's own margin keeps them
+    /// apart, and the narrowest island holds four across.
+    static let shortcutLeastSpacing: CGFloat = 0
+    /// A rail a few points short of its next row closes its rows only this
+    /// far: a title on two lines then sits as near the circle under it as
+    /// its own circle above, never nearer.
+    static let shortcutLeastRowSpacing: CGFloat = 6
     static let systemCardHeight: CGFloat = 72
     static let systemCardWidth: CGFloat = 128
     /// Leave room for the card's hover scale, including a single full-width card.
@@ -271,6 +291,10 @@ enum NotchLayout {
     static let toolHeight: CGFloat = 72
     static let toolWidth: CGFloat = 76
     static let toolSpacing: CGFloat = 6
+    /// Tools that would just miss the island's width close their gaps, down
+    /// to none, before their rail scrolls, so the narrowest island holds
+    /// four across, as the home page's shortcuts do.
+    static let toolLeastSpacing: CGFloat = 0
     /// Three rows fit the gallery's page; two still fill a compact strip.
     static let sectionTileHeight: CGFloat = 86
     static let sectionTileWidth: CGFloat = 92
@@ -484,6 +508,27 @@ enum NotchLayout {
         CGFloat(columns) * itemWidth + CGFloat(max(0, columns - 1)) * spacing <= width
     }
 
+    /// The room between the columns of a rail that fits: its own spacing,
+    /// or what is left where that would just miss the width, down to
+    /// `least`, so the rail closes its gaps before it scrolls. Nil once
+    /// the columns would not fit even then.
+    static func railGap(columns: Int, itemWidth: CGFloat, spacing: CGFloat, least: CGFloat, width: CGFloat) -> CGFloat? {
+        if railFits(columns: columns, itemWidth: itemWidth, spacing: spacing, width: width) { return spacing }
+        guard columns > 1, railFits(columns: columns, itemWidth: itemWidth, spacing: least, width: width) else { return nil }
+        return (width - CGFloat(columns) * itemWidth) / CGFloat(columns - 1)
+    }
+
+    /// A tool's title spans its cell, where a shortcut's label keeps a
+    /// margin, so where the rail closes its gaps each title gives up half
+    /// of the closed gap on either side: neighbouring titles stay as far
+    /// apart as the rail's spacing keeps them elsewhere. Zero where the
+    /// rail keeps its gaps or scrolls.
+    static func toolTitleInset(count: Int, rows: Int, width: CGFloat) -> CGFloat {
+        let gap = railGap(columns: railColumns(count: count, rows: rows), itemWidth: toolWidth, spacing: toolSpacing,
+                          least: toolLeastSpacing, width: width)
+        return max(0, toolSpacing - (gap ?? toolSpacing)) / 2
+    }
+
     /// Square artwork, its gap, the three compact transport buttons under the
     /// title, and horizontal padding. Track titles truncate within the
     /// remaining space; a wider card moves the transport beside them.
@@ -509,19 +554,30 @@ enum NotchLayout {
         }
     }
 
-    /// How many of the home page's levels the island's top row holds. A full
-    /// row holds them all. Beside a camera they sit one on each side only
+    /// How many of the home page's levels the island's top row holds, each
+    /// at least at its narrowest after the sections button. A full row
+    /// holds them all. Beside a camera they sit one on each side only
     /// while they split evenly; three would leave one side with two and
-    /// nothing under the other, so they share a row below the camera's.
+    /// nothing under the other, so they share a row below the camera's,
+    /// as they do where the button leaves the first one too little.
     static func bandLevelCount(_ levels: Int, band: NotchBand) -> Int {
         let count = max(0, levels)
-        return !band.besideCamera || count <= 2 ? count : 0
+        guard band.besideCamera else {
+            // The trailing end keeps the row's spacing before the island's marks.
+            let held = CGFloat(count) * bandLevelMinimumWidth + CGFloat(max(0, count - 1)) * bandLevelSpacing
+            return held + bandLevelSpacing <= band.leadingRoom ? count : 0
+        }
+        return count <= 2 && band.leadingRoom >= bandLevelMinimumWidth ? count : 0
     }
 
     /// A level reading at the trailing end of the home page's full row,
     /// where the levels make room for it.
     static let homeReadingWidth: CGFloat = 220
     static let homeReadingMinimumWidth: CGFloat = 160
+    /// The narrowest side a level reading names its percentage in: the
+    /// least a page's row keeps beside a camera. Across from the player's
+    /// cover a side has less, and the reading keeps its glyph and a meter.
+    static let levelReadingDetailWidth: CGFloat = 92
 
     /// How wide that reading is while every level keeps its narrowest; nil
     /// when the row is too narrow for both, and the reading covers the
@@ -535,22 +591,33 @@ enum NotchLayout {
 
     /// The home page: the levels a camera's row has no room for, the
     /// player's card and a rail of shortcuts. A tight budget shortens the
-    /// card before it drops a row.
+    /// card, then closes the rows of a rail that would scroll, before it
+    /// drops a row.
     static func controls(hasCards: Bool, levelRow: Bool = false, shortcutCount: Int,
                          width: CGFloat, height: CGFloat) -> NotchControlsLayout {
         let levels = levelRow ? levelRowHeight : 0
         guard hasCards || shortcutCount > 0 else { return NotchControlsLayout(levelRow: levels, cardRow: 0, shortcutRows: 0) }
         let budget = height - (levels > 0 ? levels + rowSpacing : 0)
-        var rows = 0
+        var rows = 0, rowGap = shortcutSpacing
         if shortcutCount > 0 {
             let remaining = hasCards ? budget - minimumCardHeight - rowSpacing : budget
             rows = railRows(count: shortcutCount,
                             perRow: railCapacity(width: width, itemWidth: shortcutWidth, spacing: shortcutSpacing),
                             rowHeight: shortcutHeight, spacing: shortcutSpacing, height: remaining)
+            // A rail that would scroll sideways closes its rows as it closes
+            // its columns, to take the row it is a few points short of; one
+            // that fits keeps its rows and gaps.
+            if railGap(columns: railColumns(count: shortcutCount, rows: rows), itemWidth: shortcutWidth,
+                       spacing: shortcutSpacing, least: shortcutLeastSpacing, width: width) == nil,
+               let gap = railGap(columns: rows + 1, itemWidth: shortcutHeight, spacing: shortcutSpacing,
+                                 least: shortcutLeastRowSpacing, width: remaining) {
+                rows += 1
+                rowGap = gap
+            }
         }
-        let rail = rows > 0 ? railHeight(rows: rows, rowHeight: shortcutHeight, spacing: shortcutSpacing) + rowSpacing : 0
+        let rail = rows > 0 ? railHeight(rows: rows, rowHeight: shortcutHeight, spacing: rowGap) + rowSpacing : 0
         let cardRow = hasCards ? min(cardHeight, max(minimumCardHeight, budget - rail)) : 0
-        return NotchControlsLayout(levelRow: levels, cardRow: cardRow, shortcutRows: rows)
+        return NotchControlsLayout(levelRow: levels, cardRow: cardRow, shortcutRows: rows, shortcutRowSpacing: rowGap)
     }
 
     /// The modes and Start are in the island's top row, so setup is the
@@ -620,10 +687,11 @@ struct NotchControlsLayout: Equatable {
     var levelRow: CGFloat = 0
     let cardRow: CGFloat
     let shortcutRows: Int
+    var shortcutRowSpacing = NotchLayout.shortcutSpacing
 
     var height: CGFloat {
         let rail = shortcutRows > 0
-            ? NotchLayout.railHeight(rows: shortcutRows, rowHeight: NotchLayout.shortcutHeight, spacing: NotchLayout.shortcutSpacing) : 0
+            ? NotchLayout.railHeight(rows: shortcutRows, rowHeight: NotchLayout.shortcutHeight, spacing: shortcutRowSpacing) : 0
         let rows = [levelRow, cardRow, rail].filter { $0 > 0 }
         return rows.reduce(0, +) + CGFloat(max(0, rows.count - 1)) * NotchLayout.rowSpacing
     }
@@ -2149,6 +2217,9 @@ struct NotchGeometry: Equatable {
     /// The width the open page reads best at, inside the width the person
     /// chose, which stays the limit; nil takes all of it, as lists do.
     var pageContentWidth: CGFloat? = nil
+    /// Nothing floating beside the island leads to its sections, so the
+    /// open page's row starts with the island's own button for them.
+    var sectionsButtonInRow = false
     private var allowsActivityFooter = true
     private var minimumCompactWidth: CGFloat = 0
     /// Narrower wings than this are dropped rather than drawn cramped.
@@ -2225,6 +2296,20 @@ struct NotchGeometry: Equatable {
     }
     /// What each side of the camera keeps for the page's row.
     var pageBandSide: CGFloat { pageTop == .wrapsCamera ? NotchLayout.musicBandSide : 100 }
+    /// The sections button leads the row, unless the page lays out its
+    /// leading side itself, as the player does.
+    var rowShowsSectionsButton: Bool { sectionsButtonInRow && pageTop != .wrapsCamera }
+
+    /// The island opened on `module` at rest: the page's top row and the
+    /// width it reads best at, with the sections button where nothing
+    /// floating beside the island offers them.
+    func page(_ module: NotchModule, controls: [NotchControlItem], sectionsButton: Bool) -> NotchGeometry {
+        var result = self
+        result.pageTop = module.pageTop
+        result.pageContentWidth = NotchLayout.naturalContentWidth(module, controls: controls, within: contentWidth)
+        result.sectionsButtonInRow = sectionsButton
+        return result
+    }
     /// A capsule's row keeps clear of its rounded top corners, its 28-point
     /// buttons as far from the top edge as the page is from the bottom. A
     /// page with no row starts as far from the top as it ends from the bottom.
@@ -2521,9 +2606,12 @@ struct NotchGeometry: Equatable {
     var expandedWidth: CGFloat {
         let chosen = NotchLayout.preferredWidth(layout, custom: customWidth)
         // A page with a width of its own takes no more, still wrapping the
-        // camera with its row where the chosen width would have.
+        // camera with its row where the chosen width would have. Each side
+        // keeps its room for the page's controls past the sections button,
+        // as the camera's sides are as wide as each other.
+        let wing = pageBandSide + (rowShowsSectionsButton ? NotchBand.sectionsButtonRoom : 0)
         let preferred = pageContentWidth.map { natural in
-            min(chosen, max(natural, isNotched ? cameraWidth + pageBandSide * 2 : 0) + NotchLayout.horizontalInset * 2)
+            min(chosen, max(natural, isNotched ? cameraWidth + wing * 2 : 0) + NotchLayout.horizontalInset * 2)
         } ?? chosen
         return min(max(preferred, cameraWidth + 36), screen.width - 24 - NotchQuickAccessLayout.gutter * 2)
     }
@@ -2560,12 +2648,13 @@ struct NotchGeometry: Equatable {
     }
 
     /// The arrows walk the tiles the way the rail draws them: reading order
-    /// while every column fits, the columns it fills once it scrolls.
+    /// while every column fits, closing its gaps if it must, the columns it
+    /// fills once it scrolls.
     func toolFlow(count: Int) -> QuickToolsSupport.GridFlow {
         let rows = toolRows(count: count)
         let columns = NotchLayout.railColumns(count: count, rows: rows)
-        return NotchLayout.railFits(columns: columns, itemWidth: NotchLayout.toolWidth,
-                                    spacing: NotchLayout.toolSpacing, width: contentWidth)
+        return NotchLayout.railGap(columns: columns, itemWidth: NotchLayout.toolWidth, spacing: NotchLayout.toolSpacing,
+                                   least: NotchLayout.toolLeastSpacing, width: contentWidth) != nil
             ? .rows(columns: columns) : .columns(rows: rows)
     }
 
