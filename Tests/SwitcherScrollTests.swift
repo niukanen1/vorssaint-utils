@@ -39,9 +39,23 @@ enum SwitcherScrollContract {
         let naturalPreviewWidth: CGFloat
     }
 
+    /// Native layout output stays observable even before a scroll view exists.
+    private struct ObservationOutput: Equatable {
+        let windowFrame: CGRect
+        let geometry: ObservationGeometry?
+
+        var windowFrameValid: Bool {
+            windowFrame.origin.x.isFinite && windowFrame.origin.y.isFinite
+                && windowFrame.size.width.isFinite && windowFrame.size.height.isFinite
+                && windowFrame.maxX.isFinite && windowFrame.maxY.isFinite
+                && windowFrame.size.width > 0 && windowFrame.size.height > 0
+        }
+    }
+
     private struct ObservationSample {
         let elapsed: Double
-        let geometry: ObservationGeometry?
+        let output: ObservationOutput
+        var geometry: ObservationGeometry? { output.geometry }
         let selectedIndex: Int
         let selectedID: String?
         let drainGeneration: Int
@@ -55,7 +69,8 @@ enum SwitcherScrollContract {
         let activationProhibited: Bool
 
         var valid: Bool {
-            geometry?.documentFrame != nil && geometry?.documentBounds != nil && selectionMatches && inputsUnchanged
+            output.windowFrameValid && geometry?.documentFrame != nil && geometry?.documentBounds != nil
+                && selectionMatches && inputsUnchanged
                 && viewportMatches && selectedVisible && pairVisible && allPreviewsVisible
                 && windowUnordered && activationProhibited && drainGeneration == 2
         }
@@ -65,7 +80,8 @@ enum SwitcherScrollContract {
     private struct ObservationState {
         private(set) var last: ObservationSample?
         private(set) var oldBoundary: ObservationSample?
-        private(set) var beforeBoundaryElapsed: Double?
+        private(set) var beforeBoundary: ObservationSample?
+        var beforeBoundaryElapsed: Double? { beforeBoundary?.elapsed }
         private(set) var firstVisible: Double?
         private(set) var firstValid: Double?
         private(set) var firstStable: Double?
@@ -79,7 +95,7 @@ enum SwitcherScrollContract {
         private(set) var clockInvalid = false
         private(set) var terminalInvalid = false
         private(set) var geometryChanges = 0
-        private(set) var transitions: [(Double, ObservationGeometry?)] = []
+        private(set) var transitions: [(Double, ObservationOutput)] = []
 
         var stableFor: Double {
             guard let last, let stableSince else { return 0 }
@@ -112,7 +128,7 @@ enum SwitcherScrollContract {
         }
 
         mutating func consumeFinal(_ sample: ObservationSample) {
-            if last?.valid != true || !sample.valid || last?.geometry != sample.geometry {
+            if last?.valid != true || !sample.valid || last?.output != sample.output {
                 terminalInvalid = true
             }
             consume(sample)
@@ -125,7 +141,7 @@ enum SwitcherScrollContract {
             if let last { largestGap = max(largestGap, sample.elapsed - last.elapsed) }
             if oldBoundary == nil && sample.elapsed >= ObservationPolicy.floor {
                 oldBoundary = sample
-                beforeBoundaryElapsed = last?.elapsed
+                beforeBoundary = last
             }
             if firstVisible == nil && sample.selectedVisible && sample.selectionMatches {
                 firstVisible = sample.elapsed
@@ -133,13 +149,13 @@ enum SwitcherScrollContract {
             if firstValid == nil && sample.valid { firstValid = sample.elapsed }
             if !sample.selectionMatches || !sample.inputsUnchanged { identityChanged = true }
             if qualifiedOnce && !sample.valid { regressionLatched = true }
-            if let last, last.geometry != sample.geometry {
+            if let last, last.output != sample.output {
                 geometryChanges += 1
-                transitions.append((sample.elapsed, sample.geometry))
+                transitions.append((sample.elapsed, sample.output))
                 if transitions.count > 16 { transitions.remove(at: 8) }
             }
             if sample.valid {
-                if last?.valid == true && last?.geometry == sample.geometry {
+                if last?.valid == true && last?.output == sample.output {
                     stableSamples += 1
                 } else {
                     stableSince = sample.elapsed
@@ -170,7 +186,6 @@ enum SwitcherScrollContract {
         let search: String
         let previews: [String]
         let layout: SwitcherIconRowLayout
-        let windowFrame: CGRect
     }
 
     /// Primitive samples exercise the reducer, separately from native geometry.
@@ -181,13 +196,15 @@ enum SwitcherScrollContract {
             documentFrame: CGRect(x: 0, y: 0, width: 500, height: 30),
             expectedViewport: 200, start: 1, width: 100, spacing: 3, padding: 1, naturalPreviewWidth: 0)
         func sample(_ time: Double, visible: Bool = true, selection: Bool = true,
-                    inputs: Bool = true, drain: Int = 2, present: Bool = true, offset: CGFloat = 0) -> ObservationSample {
+                    inputs: Bool = true, drain: Int = 2, present: Bool = true, offset: CGFloat = 0,
+                    windowFrame: CGRect = CGRect(x: 0, y: 0, width: 500, height: 100)) -> ObservationSample {
             let measured = ObservationGeometry(clip: geometry.clip.offsetBy(dx: offset, dy: 0),
                 clipFrame: geometry.clipFrame, documentBounds: geometry.documentBounds,
                 documentFrame: geometry.documentFrame, expectedViewport: geometry.expectedViewport,
                 start: geometry.start, width: geometry.width, spacing: geometry.spacing,
                 padding: geometry.padding, naturalPreviewWidth: geometry.naturalPreviewWidth)
-            return ObservationSample(elapsed: time, geometry: present ? measured : nil,
+            return ObservationSample(elapsed: time,
+                output: ObservationOutput(windowFrame: windowFrame, geometry: present ? measured : nil),
                 selectedIndex: selection ? 0 : 1, selectedID: selection ? "0" : "1",
                 drainGeneration: drain, selectionMatches: selection, inputsUnchanged: inputs,
                 viewportMatches: true, selectedVisible: visible, pairVisible: true,
@@ -233,6 +250,56 @@ enum SwitcherScrollContract {
               terminal: true, currentStable: true)
         check("late-recovery", [sample(0, visible: false), sample(0.5, visible: false),
                                sample(0.7), sample(0.78), sample(0.86)], accepted: true, late: true)
+
+        let frameA = CGRect(x: 0, y: 0, width: 500, height: 100)
+        let frameB = CGRect(x: 7, y: 9, width: 452, height: 164)
+        var autosize = ObservationState()
+        [sample(0, windowFrame: frameA), sample(0.08, windowFrame: frameA)].forEach { autosize.consume($0) }
+        let beforeResize = autosize.last
+        autosize.consume(sample(0.1, windowFrame: frameB))
+        let resizeReset = autosize.stableSince == 0.1 && autosize.stableSamples == 1
+            && autosize.geometryChanges == 1 && !autosize.qualifiedOnce && !autosize.canFinish
+            && autosize.last?.geometry == beforeResize?.geometry && !autosize.identityChanged
+        autosize.consume(sample(0.18, windowFrame: frameB))
+        let twoSamplesInsufficient = !autosize.currentlyStable && !autosize.canFinish
+        autosize.consume(sample(0.26, windowFrame: frameB))
+        let newFrameEarnedStability = autosize.currentlyStable && autosize.stableSince == 0.1
+            && autosize.stableSamples == 3 && !autosize.canFinish
+        autosize.consume(sample(0.49, windowFrame: frameB))
+        let floorPreserved = !autosize.canFinish
+        autosize.consume(sample(0.5, windowFrame: frameB))
+        let autosizeAccepted = resizeReset && twoSamplesInsufficient && newFrameEarnedStability
+            && floorPreserved && autosize.canFinish && !autosize.identityChanged
+        suite.expect(autosizeAccepted, "scroll observation reducer native-output-autosize-before-qualification: new frame earns exact stability and floor without changing logical inputs")
+        print("SWITCHER SCROLL REDUCER case=native-output-autosize-before-qualification, accepted=\(autosize.canFinish), expected=true, reset=\(resizeReset), two-samples-insufficient=\(twoSamplesInsufficient), new-frame-stable=\(newFrameEarnedStability), floor-preserved=\(floorPreserved), identity-changed=\(autosize.identityChanged), geometry-changes=\(autosize.geometryChanges), contract=\(autosizeAccepted)")
+
+        var unsettled = ObservationState()
+        let changingTimes = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9,
+                             1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.99]
+        for (index, elapsed) in changingTimes.enumerated() {
+            unsettled.consume(sample(elapsed, windowFrame: index.isMultiple(of: 2) ? frameA : frameB))
+        }
+        let neverSettled = !unsettled.canFinish && !unsettled.qualifiedOnce && !unsettled.currentlyStable
+            && !unsettled.identityChanged && unsettled.last?.valid == true
+            && unsettled.last?.elapsed == 1.99 && unsettled.stableSamples == 1
+            && unsettled.stableSince == 1.99 && unsettled.geometryChanges == changingTimes.count - 1
+        suite.expect(neverSettled, "scroll observation reducer native-output-frame-never-settles: frame-only changes cannot qualify before the deadline")
+        print("SWITCHER SCROLL REDUCER case=native-output-frame-never-settles, accepted=\(unsettled.canFinish), expected=false, qualified=\(unsettled.qualifiedOnce), currently-stable=\(unsettled.currentlyStable), identity-changed=\(unsettled.identityChanged), elapsed=\(unsettled.last?.elapsed ?? -1), geometry-changes=\(unsettled.geometryChanges), contract=\(neverSettled)")
+
+        var finalFrame = ObservationState()
+        (stable + [sample(0.49), sample(0.5)]).forEach { finalFrame.consume($0) }
+        let finishBeforeFrameChange = finalFrame.canFinish
+        let priorClipGeometry = finalFrame.last?.geometry
+        finalFrame.consumeFinal(sample(0.501, windowFrame: frameB))
+        let frameOnlyFinalRejected = finalFrame.terminalInvalid && !finalFrame.canFinish
+            && finalFrame.last?.geometry == priorClipGeometry && finalFrame.last?.valid == true
+            && !finalFrame.identityChanged
+        [sample(0.6, windowFrame: frameB), sample(0.7, windowFrame: frameB),
+         sample(0.8, windowFrame: frameB)].forEach { finalFrame.consume($0) }
+        let finalFrameRejected = finishBeforeFrameChange && frameOnlyFinalRejected
+            && finalFrame.currentlyStable && finalFrame.terminalInvalid && !finalFrame.canFinish
+        suite.expect(finalFrameRejected, "scroll observation reducer fresh-final-window-frame-only-change: terminal movement remains rejected after stable recovery")
+        print("SWITCHER SCROLL REDUCER case=fresh-final-window-frame-only-change, accepted=\(finalFrame.canFinish), expected=false, qualified-before-final=\(finishBeforeFrameChange), frame-only-rejected=\(frameOnlyFinalRejected), terminal=\(finalFrame.terminalInvalid), currently-stable=\(finalFrame.currentlyStable), identity-changed=\(finalFrame.identityChanged), contract=\(finalFrameRejected)")
     }
     final class Model: ObservableObject {
         @Published var windows: [Item] = []
@@ -318,7 +385,9 @@ enum SwitcherScrollContract {
             let g = sample.geometry
             return [
                 "elapsed=\(decimal(sample.elapsed))", "selected-index=\(sample.selectedIndex)",
-                "selected-id=\(sample.selectedID ?? "none")", "clip=\(rect(g?.clip))",
+                "selected-id=\(sample.selectedID ?? "none")",
+                "output-window-frame=\(rect(sample.output.windowFrame))",
+                "output-window-frame-valid=\(sample.output.windowFrameValid)", "clip=\(rect(g?.clip))",
                 "clip-frame=\(rect(g?.clipFrame))", "document=\(rect(g?.documentFrame))",
                 "document-bounds=\(rect(g?.documentBounds))",
                 "expected-viewport=\(g.map { decimal(Double($0.expectedViewport)) } ?? "none")",
@@ -378,10 +447,13 @@ enum SwitcherScrollContract {
                     previewSizeLookup: String(reflecting: UserDefaults.standard.object(forKey: DefaultsKey.switcherPreviewSize)),
                     search: model.searchQuery,
                     previews: model.previews.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" },
-                    layout: model.iconRowLayout, windowFrame: window.frame)
+                    layout: model.iconRowLayout)
             }
             func capture(began: Double, expected: ObservationInputs, drain: Int) -> ObservationSample {
                 let current = inputs()
+                // Read native frame in the same synchronous capture as scroll geometry.
+                // It is layout output, including while scroll geometry is missing.
+                let nativeWindowFrame = window.frame
                 let scroll = findScroll(hosting)
                 var geometry: ObservationGeometry?
                 var viewport = false, visible = false, pair = false, previews = false
@@ -412,7 +484,8 @@ enum SwitcherScrollContract {
                     }
                 }
                 return ObservationSample(elapsed: ProcessInfo.processInfo.systemUptime - began,
-                    geometry: geometry, selectedIndex: current.selectedIndex, selectedID: current.selectedID,
+                    output: ObservationOutput(windowFrame: nativeWindowFrame, geometry: geometry),
+                    selectedIndex: current.selectedIndex, selectedID: current.selectedID,
                     drainGeneration: drain,
                     selectionMatches: expected.selectedID != nil && current.selectedIndex == expected.selectedIndex
                         && current.selectedID == expected.selectedID,
@@ -429,7 +502,7 @@ enum SwitcherScrollContract {
                     "scope=\(String(describing: value.scope))", "screen=\(decimal(Double(value.screenWidth)))",
                     "preview-size-lookup=\(value.previewSizeLookup)", "search=\(String(reflecting: value.search))",
                     "previews=\(value.previews.joined(separator: "|"))",
-                    "layout=\(String(reflecting: value.layout))", "window-frame=\(rect(value.windowFrame))",
+                    "layout=\(String(reflecting: value.layout))",
                 ].joined(separator: ", ")
             }
             var previousSample: ObservationSample?
@@ -500,7 +573,9 @@ enum SwitcherScrollContract {
                     : state.regressionLatched ? "regression-latched" : state.terminalInvalid ? "final-fresh-invalid" : accepted
                         ? (state.lateAssessmentRequired ? "stable-late-assessment" : "stable")
                         : final.elapsed >= ObservationPolicy.deadline ? "deadline" : "final-fresh-invalid"
-                let changes = state.transitions.map { "\(decimal($0.0)):\(rect($0.1?.clip))" }.joined(separator: "|")
+                let changes = state.transitions.map {
+                    "\(decimal($0.0)):{output-window-frame=\(rect($0.1.windowFrame)), clip=\(rect($0.1.geometry?.clip))}"
+                }.joined(separator: "|")
                 let diagnostics = [
                     "scenario=\(name)", "step=\(step)", "simple=\(expected.simple)", "instant=\(instantSelection)",
                     "os=\(ProcessInfo.processInfo.operatingSystemVersionString)",
@@ -519,7 +594,8 @@ enum SwitcherScrollContract {
                     "terminal-invalid=\(state.terminalInvalid)", "geometry-changes=\(state.geometryChanges)", "transitions=\(changes)",
                     "reason=\(reason)", "accepted=\(accepted)",
                     "expected-inputs={\(inputDescription(expected))}", "terminal-inputs={\(inputDescription(terminalInputs))}",
-                    "initial={\(describe(initial))}", "old-boundary={\(describe(state.oldBoundary))}",
+                    "initial={\(describe(initial))}",
+                    "old-boundary-predecessor={\(describe(state.beforeBoundary))}", "old-boundary={\(describe(state.oldBoundary))}",
                     "final={\(describe(final))}",
                 ].joined(separator: ", ")
                 print("SWITCHER SCROLL OBSERVATION \(diagnostics)")
