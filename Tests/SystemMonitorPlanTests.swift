@@ -175,6 +175,22 @@ enum SystemMonitorPlanTests {
         check(false, scenario: "idle")
         defaults.set(true, forKey: DefaultsKey.monitorAlertHighCharge)
         check(true, scenario: "high-charge-only")
+        // This explicit off-stride fixture joins the production demand plan
+        // to the event policy; it does not claim the ordinary wake grid uses it.
+        let highChargePlan = monitor.currentPlan(defaults: defaults)
+        let eventForcing: Set<MonitorSamplingKind> = [.power, .powerDraw]
+        let ordinaryPower = highChargePlan.needPower && MonitorSamplingPolicy.shouldSample(
+            highChargePlan.powerKind, tick: 3, intervalSeconds: 2, foreground: false)
+        let eventPower = highChargePlan.needPower && MonitorSamplingPolicy.shouldSample(
+            highChargePlan.powerKind, tick: 3, intervalSeconds: 2, foreground: false, forced: eventForcing)
+        let eventDisk = MonitorSamplingPolicy.shouldSample(
+            .disk, tick: 3, intervalSeconds: 2, foreground: false, forced: eventForcing)
+        let eventDiagnostics = "scenario=high-charge-only, fixture-tick=3, interval=2, foreground=false, "
+            + "need-power=\(highChargePlan.needPower), power-kind=\(highChargePlan.powerKind.rawValue), "
+            + "ordinary-power=\(ordinaryPower), event-power=\(eventPower), event-disk=\(eventDisk)"
+        suite.expect(highChargePlan.powerKind == .power && !ordinaryPower && eventPower && !eventDisk,
+                     "the demanded high-charge power samples off stride for an event without forcing disk: \(eventDiagnostics)")
+        print("ALERT POWER EVENT PLAN \(eventDiagnostics)")
         defaults.set(false, forKey: DefaultsKey.monitorAlertHighCharge)
         check(false, scenario: "high-charge-disabled")
         defaults.set(true, forKey: DefaultsKey.monitorAlertHighCharge)
