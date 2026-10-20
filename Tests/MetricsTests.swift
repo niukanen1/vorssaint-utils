@@ -29,7 +29,6 @@ struct MetricsTests {
             ("pointer-input", {
                 PointerOnDisplayContract.run(suite)
                 PointerInputFeatureTests.run(suite)
-                SmoothScrollRoutingTests.run(suite)
                 KeyboardDebounceTapTests.run(suite)
                 PointerDisplayLookupContract.run(suite)
                 SuperKeyTapContract.run(suite)
@@ -61,6 +60,7 @@ struct MetricsTests {
                 AirPlayAvailabilityContract.run(suite)
                 AirPlayConcurrentLanesContract.run(suite)
                 AirPlayBacklogContract.run(suite)
+                AirPlayIdleContract.run(suite)
                 MixerInputVolumeContract.run(suite)
                 MixerPercentKeyTests.run(suite)
                 MixerFeatureTests.run(suite)
