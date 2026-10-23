@@ -1321,7 +1321,7 @@ final class AppVolumeMixer: ObservableObject {
         subscribeToOutputControls(of: snapshot.defaultDeviceID)
         applyOutputControls(volume: snapshot.systemOutputVolume, muted: snapshot.systemOutputMuted)
 
-        guard let next = snapshot.apps else {
+        guard let readApps = snapshot.apps else {
             if !apps.isEmpty {
                 apps = []
             }
@@ -1335,6 +1335,9 @@ final class AppVolumeMixer: ObservableObject {
             subscribeToRunningChanges(of: object)
         }
 
+        // The pass resolved volumes from a copy captured when it was requested,
+        // and a write made while it read the HAL is newer than that copy.
+        let next = applyingCurrentVolumes(to: readApps)
         guard audioEnvironmentChanged || next != apps else { return }
         if apps != next {
             apps = next
@@ -1940,6 +1943,19 @@ final class AppVolumeMixer: ObservableObject {
         Self.storedRoute(for: identity, saved: saved, session: sessionRoutes)
     }
 
+    /// Main thread. A refresh pass resolves volumes from the copy it captured
+    /// when it was requested, and `setVolume` can write while the pass is still
+    /// reading the HAL. Resolving them again at publish time keeps that newer
+    /// write from being reverted; everything else in a row stays as read.
+    private func applyingCurrentVolumes(to rows: [MixerApp]) -> [MixerApp] {
+        let saved = savedVolumes()
+        return rows.map { row in
+            var row = row
+            row.volume = row.isBypassed ? 1 : (storedVolume(for: row.identity, saved: saved) ?? 1)
+            return row
+        }
+    }
+
     private func persistVolume(_ volume: Double, for app: MixerApp) {
         guard let id = app.persistenceID else {
             // Neither a bundle id nor a display name: nothing stable to write
@@ -2060,7 +2076,8 @@ final class AppVolumeMixer: ObservableObject {
 
         var devices: [MixerOutputDevice] = []
         for deviceID in deviceIDs {
-            guard hasOutputStreams(deviceID) else { continue }
+            let streams = outputStreams(deviceID)
+            guard !streams.isEmpty else { continue }
 
             var isAlive: UInt32 = 1
             if read(deviceID, kAudioDevicePropertyDeviceIsAlive, &isAlive), isAlive == 0 {
@@ -2087,6 +2104,10 @@ final class AppVolumeMixer: ObservableObject {
                 : uid
             guard !MicMuteSupport.isOwnDevice(name: name) else { continue }
             let dataSourceName = outputDataSourceName(for: deviceID)
+            let terminalTypes: [UInt32] = streams.compactMap { stream in
+                var terminal: UInt32 = kAudioStreamTerminalTypeUnknown
+                return read(stream, kAudioStreamPropertyTerminalType, &terminal) ? terminal : nil
+            }
             var transportType: UInt32 = 0
             _ = read(deviceID, kAudioDevicePropertyTransportType, &transportType)
 
@@ -2097,7 +2118,8 @@ final class AppVolumeMixer: ObservableObject {
                                              isHeadphones: MixerRoutingSupport.outputLooksLikeHeadphones(
                                                 name: name,
                                                 uid: uid,
-                                                dataSourceName: dataSourceName),
+                                                dataSourceName: dataSourceName,
+                                                terminalTypes: terminalTypes),
                                              canBeDefaultOutput: canBeDefaultOutput,
                                              canBeDefaultSystemOutput: canBeDefaultSystemOutput,
                                              priorityTier: MixerRoutingSupport.PriorityTier(
@@ -2186,13 +2208,16 @@ final class AppVolumeMixer: ObservableObject {
             storage.assumingMemoryBound(to: AudioBufferList.self)).map { Int($0.mNumberChannels) }
     }
 
-    private static func hasOutputStreams(_ deviceID: AudioObjectID) -> Bool {
+    private static func outputStreams(_ deviceID: AudioObjectID) -> [AudioStreamID] {
         var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreams,
                                                  mScope: kAudioObjectPropertyScopeOutput,
                                                  mElement: kAudioObjectPropertyElementMain)
         var size: UInt32 = 0
-        return AudioObjectGetPropertyDataSize(deviceID, &address, 0, nil, &size) == noErr
-            && size >= MemoryLayout<AudioObjectID>.size
+        guard AudioObjectGetPropertyDataSize(deviceID, &address, 0, nil, &size) == noErr,
+              size >= MemoryLayout<AudioStreamID>.size else { return [] }
+        var streams = [AudioStreamID](repeating: 0, count: Int(size) / MemoryLayout<AudioStreamID>.size)
+        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &streams) == noErr else { return [] }
+        return Array(streams.prefix(Int(size) / MemoryLayout<AudioStreamID>.size))
     }
 
     private static func canBeDefault(_ deviceID: AudioObjectID,
